@@ -464,45 +464,32 @@ def get_state():
         r = subprocess.run(['ollama', 'list'], capture_output=True, text=True, timeout=5)
         lines = r.stdout.split('\n')
         if len(lines) > 1:
-            header = lines[0].split()
-            # Find SIZE column
-            try:
-                size_col = header.index('SIZE')
-            except ValueError:
-                size_col = 2
             for line in lines[1:]:
                 parts = line.split()
-                if len(parts) <= size_col:
+                if len(parts) < 3:
                     continue
                 name = parts[0]
-                size_str = parts[size_col]
                 if name in active_profile_names:
                     continue
-                # Parse size (handles "1.1", "4.7", "274 MB", "1.1 GB", etc.)
+                # Find size value (number followed by unit)
                 size_gb = 0
-                try:
-                    s = size_str.strip()
-                    # First strip unit
-                    if s.endswith('GB'):
-                        size_gb = float(s[:-2])
-                    elif s.endswith('MB') or (s.endswith('M') and not s.endswith('GB')):
-                        num = s.rstrip('MB').rstrip('M')
-                        size_gb = float(num) / 1024 if num else 0
-                    elif s.endswith('KB') or s.endswith('K'):
-                        size_gb = float(s.rstrip('KB').rstrip('K')) / (1024 * 1024)
-                    elif s.endswith('B') and not s.endswith('GB') and not s.endswith('MB'):
-                        size_gb = float(s[:-1]) / 1e9
-                    else:
-                        # No unit — assume MB if value < 100, else GB
-                        n = float(s)
-                        if n < 100:
-                            size_gb = n / 1024  # treat as MB
-                        else:
-                            size_gb = n  # already GB
-                except Exception:
-                    size_gb = 0
+                for i, p in enumerate(parts[:-1]):
+                    if p in ('GB', 'MB', 'KB', 'B', 'G', 'M', 'K'):
+                        try:
+                            num = float(parts[i-1])
+                            if p in ('GB', 'G'):
+                                size_gb = num
+                            elif p in ('MB', 'M'):
+                                size_gb = num / 1024
+                            elif p in ('KB', 'K'):
+                                size_gb = num / (1024 * 1024)
+                            else:
+                                size_gb = num / 1e9
+                            break
+                        except (ValueError, IndexError):
+                            pass
                 # Skip cloud placeholders with 0 size
-                if size_gb == 0 and ':cloud' in name:
+                if size_gb == 0 and (':cloud' in name or name in ('glm-5.2:cloud',)):
                     continue
                 # Determine emoji by purpose
                 emoji = '📦'
@@ -523,7 +510,7 @@ def get_state():
                     use = 'general'
                 other_models.append({
                     'name': name,
-                    'size_gb': f'{size_gb:.1f}' if size_gb else '?',
+                    'size_gb': f'{size_gb:.1f}' if size_gb > 0 else '?',
                     'use': use,
                     'emoji': emoji,
                 })
