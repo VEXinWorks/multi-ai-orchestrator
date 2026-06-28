@@ -101,6 +101,15 @@ def get_ody_session():
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=10) as resp:
+        # Odysseus returns the session cookie in Set-Cookie header, not body
+        cookie_header = resp.headers.get("Set-Cookie", "")
+        m = re.search(r'odysseus_session=([^;\s]+)', cookie_header)
+        if m:
+            token = m.group(1)
+            with open(COOKIE_FILE, "w") as f:
+                f.write(f"odysseus_session\t{token}")
+            return token
+        # Fallback: try body
         body = json.loads(resp.read())
         token = body.get("session_token") or body.get("token")
         if token:
@@ -175,6 +184,43 @@ def ask_cloud_ai(model, prompt, system=None, timeout=180):
             return data.get("response", ""), time.time() - t0
     except Exception as e:
         return f"(error: {e})", time.time() - t0
+
+
+def ask_cloud_ais_parallel(prompts, timeout=180, max_workers=3):
+    """Ask multiple cloud AIs in parallel. Returns list of (model, response, elapsed).
+
+    Each entry of `prompts` is a (model, prompt, system) tuple. Runs them in
+    a thread pool so the slowest AI doesn't gate the fastest.
+
+    Example:
+        results = ask_cloud_ais_parallel([
+            ("glm-5.2", "Plan X", None),
+            ("minimax-m3", "Plan X", None),
+            ("nemotron-3-ultra", "Plan X", None),
+        ])
+        # results = [("glm-5.2", "...", 12.3), ("minimax-m3", "...", 8.7), ...]
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _ask_one(args):
+        model, prompt, system = args
+        response, elapsed = ask_cloud_ai(model, prompt, system=system, timeout=timeout)
+        return (model, response, elapsed)
+
+    results = [None] * len(prompts)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_idx = {
+            executor.submit(_ask_one, p): i
+            for i, p in enumerate(prompts)
+        }
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            try:
+                results[idx] = future.result()
+            except Exception as e:
+                model = prompts[idx][0]
+                results[idx] = (model, f"(error: {e})", 0)
+    return results
 
 
 def ask_local_ai(prompt, model=LOCAL_AI, use_rag=True, timeout=120):
@@ -336,16 +382,18 @@ def cmd_task(task):
     print(f"  ⏱ {local_time:.2f}s")
     print(f"  Result: {local_result[:200]}...")
 
-    # Step 2: Ask 3 cloud AIs to teach local AI
-    print("\n[2/4] 3 cloud AIs analyzing the task and local AI's response...")
-    cloud_teachings = []
+    # Step 2: 3 cloud AIs teach IN PARALLEL (was sequential — saves ~2x time)
+    print("\n[2/4] Cloud AIs teaching in parallel...")
+    teach_prompts = []
     for ai in CLOUD_AIS:
-        print(f"\n  --- {ai['name']} ({ai['personality']}) ---")
-        teach_prompt = f"""A local AI was asked this task:
+        teach_prompts.append((
+            ai["model"],
+            f"""A local AI (running on limited hardware) was asked to solve this task:
+
 [TASK]
 {task}
 
-[LOCAL AI'S RESPONSE]
+[LOCAL AI'S ANSWER]
 {local_result}
 
 Your job: give CONCISE, ACTIONABLE feedback to help the local AI solve this better.
@@ -355,16 +403,25 @@ Focus on:
 3. Step-by-step approach it should take
 4. Common pitfalls to avoid
 
-Be specific and brief. Aim for 200-400 words."""
-        teaching, teach_time = ask_cloud_ai(ai["model"], teach_prompt,
-                                             system="You are a teacher helping a local AI improve.")
+Be specific and brief. Aim for 200-400 words.""",
+            "You are a teacher helping a local AI improve.",
+        ))
+
+    t0 = time.time()
+    parallel_results = ask_cloud_ais_parallel(teach_prompts, timeout=180)
+    parallel_elapsed = time.time() - t0
+    print(f"  ⏱ {parallel_elapsed:.2f}s (parallel: {len(parallel_results)} AIs)")
+
+    cloud_teachings = []
+    for model, teaching, teach_time in parallel_results:
+        # Find the AI name from model
+        ai_name = next((a["name"] for a in CLOUD_AIS if a["model"] == model), model)
         cloud_teachings.append({
-            "ai": ai["name"],
+            "ai": ai_name,
             "teaching": teaching,
             "time": teach_time,
         })
-        print(f"    ⏱ {teach_time:.2f}s")
-        print(f"    Teaching: {teaching[:200]}...")
+        print(f"    {ai_name} ({teach_time:.2f}s): {teaching[:200]}...")
 
     # Step 3: Local AI retries with all 3 cloud teachings
     print("\n[3/4] Local AI retry with cloud feedback...")
