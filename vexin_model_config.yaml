@@ -1,0 +1,98 @@
+# VEXinWorks Model Capabilities & Constraints
+# Loaded by all local AI tools (vexin_dual_brain, vexin_talk, vexin_self_upgrade)
+# Keep this in sync with the actual hardware
+
+SYSTEM:
+  gpu: "AMD Radeon RX 6900 XT"
+  vram_total_gb: 16
+  ram_total_gb: 15
+  cpu: "AMD Ryzen"
+  cloud_endpoint: "https://ollama.com/api/chat"
+  ollama_local: "http://localhost:11434"
+
+LOCAL_MODELS:  # all models running on this GPU
+  safe_to_suggest:
+    - name: "llama3.1:8b"
+      size_gb: 4.9
+      use: "general chat, default executor"
+      params: "8B"
+    - name: "llama3.2:3b"
+      size_gb: 2.0
+      use: "fast simple questions"
+      params: "3B"
+    - name: "deepseek-r1:1.5b"
+      size_gb: 1.1
+      use: "CPU-only thinker (fast chain-of-thought)"
+      params: "1.5B"
+    - name: "qwen2.5-coder:7b"
+      size_gb: 4.7
+      use: "code generation"
+      params: "7B"
+    - name: "deepseek-r1:8b"
+      size_gb: 5.2
+      use: "deep thinking (slower than 1.5b but smarter)"
+      params: "8B"
+    - name: "moondream:latest"
+      size_gb: 1.7
+      use: "small vision model"
+      params: "1.8B"
+    - name: "llava:7b"
+      size_gb: 4.7
+      use: "vision model"
+      params: "7B"
+
+  risky_local:  # works but only if no other model is loaded
+    - name: "llama3.2-vision:11b"
+      size_gb: 7.8
+      warning: "If deepseek-r1:1.5b is on CPU and llama3.1:8b is loaded, this won't fit"
+      params: "11B"
+
+  do_not_suggest_local:  # too big for your 16GB
+    - "gpt-oss:20b"
+    - "gpt-oss:120b"
+    - "devstral-2:123b"
+    - "devstral-small-2:24b"
+    - "qwen3-coder:480b"
+    - "qwen3-coder-next"
+    - "qwen3.5:397b"
+    - "mistral-large-3:675b"
+    - "deepseek-v3.1:671b"
+
+CLOUD_MODELS:  # available via Ollama Cloud, no VRAM cost
+  fast:
+    - "minimax-m3"
+    - "minimax-m2.5"
+    - "gemini-3-flash-preview"
+  strong:
+    - "nemotron-3-ultra"
+    - "glm-5.2"
+    - "glm-5.1"
+    - "deepseek-v4-pro"
+    - "deepseek-v4-flash"
+    - "minimax-m3"
+    - "kimi-k2.6"
+    - "kimi-k2.5"
+    - "kimi-k2.7-code"
+    - "gemma4:31b"
+    - "gemma3:27b"
+    - "gemma3:12b"
+  cloud_teachers_used_by_school:
+    - "glm-5.2"
+    - "minimax-m3"
+    - "nemotron-3-ultra"
+
+VRAM_RULES:
+  rule_1: "If 2 local models are loaded simultaneously, total must be ≤ 12GB to leave headroom"
+  rule_2: "CPU-only models (deepseek-r1:1.5b) don't consume VRAM"
+  rule_3: "When in doubt, prefer local llama3.1:8b for default executor"
+  rule_4: "Vision tasks: use moondream (1.7GB) if speed matters, llava:7b (4.7GB) if quality"
+  rule_5: "Code tasks: qwen2.5-coder:7b is best local (4.7GB, fast)"
+  rule_6: "Complex reasoning: cloud nemotron-3-ultra or local deepseek-r1:8b"
+  rule_7: "Default voice/V2V: local llama3.1:8b (no cloud calls)"
+
+MEMORY_RULES:
+  avg_chunk_size: 4500
+  max_chunk_size: 5000
+  description_limit: 200
+  total_entries_target: 1500
+  auto_consolidate_threshold: 1200  # when to start merging similar entries

@@ -50,9 +50,29 @@ LOCAL_OLLAMA = "http://localhost:11434"
 LOCAL_ENDPOINT_ID = "262a8872"  # local Ollama
 CLOUD_ENDPOINT_ID = "d2947ec9"  # Ollama Cloud
 
+# Models - loaded from vexin_model_config.yaml so they're always in sync with hardware
+import yaml as _yaml
+_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "vexin_model_config.yaml")
+try:
+    with open(_CONFIG_PATH) as _f:
+        _CONFIG = _yaml.safe_load(_f)
+    LOCAL_SAFE_MODELS = [m["name"] for m in _CONFIG["LOCAL_MODELS"]["safe_to_suggest"]]
+    LOCAL_RISKY_MODELS = [m["name"] for m in _CONFIG["LOCAL_MODELS"].get("risky_local", [])]
+    LOCAL_FORBIDDEN = _CONFIG["LOCAL_MODELS"].get("do_not_suggest_local", [])
+    CLOUD_FAST = _CONFIG["CLOUD_MODELS"]["fast"]
+    CLOUD_STRONG = _CONFIG["CLOUD_MODELS"]["strong"]
+except Exception as _e:
+    print(f"[config] load failed: {_e}, using defaults", file=__import__('sys').stderr)
+    LOCAL_SAFE_MODELS = ["llama3.1:8b", "llama3.2:3b", "qwen2.5-coder:7b", "moondream:latest"]
+    LOCAL_RISKY_MODELS = ["llama3.2-vision:11b"]
+    LOCAL_FORBIDDEN = ["gpt-oss:120b", "mistral-large-3:675b", "devstral-2:123b", "qwen3-coder:480b", "qwen3.5:397b", "deepseek-v3.1:671b"]
+    CLOUD_FAST = ["minimax-m3"]
+    CLOUD_STRONG = ["nemotron-3-ultra", "glm-5.2"]
+
 # Models
-CPU_THINKER = "deepseek-r1:1.5b"  # small, fast, reasoning
+CPU_THINKER = "deepseek-r1:1.5b"  # small, fast, reasoning, CPU-only
 GPU_EXECUTOR_DEFAULT = "minimax-m3"  # cloud, fast chat
+GPU_EXECUTOR_LOCAL_DEFAULT = "llama3.1:8b"  # local fallback (works on 16GB)
 
 # Odysseus
 ODYSSEUS_URL = "http://localhost:7000"
@@ -241,14 +261,51 @@ No preamble, just the brief:"""
     return thinking, summary, time.time() - t0
 
 
+def validate_model(model):
+    """Validate that a model is safe to use on this system.
+    Returns (is_valid, warnings).
+    Rejects forbidden models, warns on risky ones.
+    """
+    warnings = []
+
+    # Check forbidden (too big for VRAM)
+    if model in LOCAL_FORBIDDEN:
+        return False, [f"❌ {model} won't fit in 16GB VRAM. Use a smaller model."]
+
+    # Check risky (works but tight)
+    if model in LOCAL_RISKY_MODELS:
+        warnings.append(f"⚠️  {model} is 7.8GB — close other models first.")
+
+    # Check if it's a known model
+    all_known = LOCAL_SAFE_MODELS + LOCAL_RISKY_MODELS + CLOUD_FAST + CLOUD_STRONG
+    if model not in all_known and ":" not in model:
+        warnings.append(f"⚠️  {model} not in our config — verifying installation.")
+
+    return True, warnings
+
+
 def gpu_execute(question, cpu_summary=None, model=None, endpoint_id=None,
                 use_rag=True):
     """GPU executor: chat with question + CPU thought summary."""
     if model is None:
         model = GPU_EXECUTOR_DEFAULT
+
+    # Validate the model
+    valid, warnings = validate_model(model)
+    if not valid:
+        print(warnings[0], file=__import__('sys').stderr)
+        # Fallback to safe local default
+        model = GPU_EXECUTOR_LOCAL_DEFAULT
+        print(f"  → using {model}", file=__import__('sys').stderr)
+    for w in warnings:
+        print(w, file=__import__('sys').stderr)
+
     if endpoint_id is None:
-        # Cloud model
-        endpoint_id = CLOUD_ENDPOINT_ID if model in ("minimax-m3", "nemotron-3-ultra", "glm-5.2") else LOCAL_ENDPOINT_ID
+        # Cloud model if it's in cloud lists, else local
+        if model in CLOUD_FAST + CLOUD_STRONG:
+            endpoint_id = CLOUD_ENDPOINT_ID
+        else:
+            endpoint_id = LOCAL_ENDPOINT_ID
 
     sid = get_or_create_session(f"dual-brain-{model}", model, endpoint_id, rag=use_rag)
     cookie, base = get_ody_session()

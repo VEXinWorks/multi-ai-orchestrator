@@ -37,15 +37,41 @@ ODYSSEUS_URL = "http://localhost:7000"
 COOKIE_FILE = "/tmp/c.txt"
 PROJECTS_DIR = Path("/home/vexin/projects")
 
+# Load model config (always check vexin_model_config.yaml)
+import yaml as _yaml2
+_CONFIG_PATH = PROJECTS_DIR / "vexin_model_config.yaml"
+try:
+    with open(_CONFIG_PATH) as _f:
+        _CFG = _yaml2.safe_load(_f)
+    LOCAL_FORBIDDEN = _CFG["LOCAL_MODELS"].get("do_not_suggest_local", [])
+    CLOUD_TEACHERS = _CFG["CLOUD_MODELS"].get("cloud_teachers_used_by_school", [])
+except Exception:
+    LOCAL_FORBIDDEN = ["gpt-oss:120b", "mistral-large-3:675b", "devstral-2:123b",
+                       "qwen3-coder:480b", "qwen3.5:397b", "deepseek-v3.1:671b"]
+    CLOUD_TEACHERS = ["glm-5.2", "minimax-m3", "nemotron-3-ultra"]
+
 # Cloud AIs (use base model names, not :cloud suffix)
-CLOUD_AIS = [
-    {"name": "GLM-5.2", "model": "glm-5.2", "personality": "general"},
-    {"name": "minimax-m3", "model": "minimax-m3", "personality": "chat"},
-    {"name": "nemotron-3-ultra", "model": "nemotron-3-ultra", "personality": "reasoning"},
-]
+# Always pull from config to stay in sync with school teachers
+CLOUD_AIS = []
+for teacher in CLOUD_TEACHERS:
+    if "glm" in teacher.lower():
+        CLOUD_AIS.append({"name": "GLM-5.2", "model": teacher, "personality": "general"})
+    elif "minimax" in teacher.lower():
+        CLOUD_AIS.append({"name": "minimax-m3", "model": teacher, "personality": "chat"})
+    elif "nemotron" in teacher.lower():
+        CLOUD_AIS.append({"name": "nemotron-3-ultra", "model": teacher, "personality": "reasoning"})
+    else:
+        CLOUD_AIS.append({"name": teacher, "model": teacher, "personality": "general"})
 
 # Local AI (for retry with feedback)
 LOCAL_AI = "llama3.1:8b"
+
+
+def is_model_safe(model):
+    """Check if a model fits in our 16GB VRAM."""
+    if model in LOCAL_FORBIDDEN:
+        return False, f"{model} exceeds 16GB VRAM"
+    return True, "OK"
 
 # Suggestions storage
 SUGGESTIONS_DIR = Path("/home/vexin/projects/self_upgrade_suggestions")
