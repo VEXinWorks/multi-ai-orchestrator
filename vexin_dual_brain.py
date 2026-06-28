@@ -474,14 +474,24 @@ def speak_text(text, voice="en-US-AriaNeural", output="/tmp/voice_output.mp3",
 
         if play:
             print(f"[tts] playing {output}...", file=sys.stderr)
-            # Use ffplay for MP3 (aplay can't do mp3)
-            r = subprocess.run(["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", output],
-                              capture_output=True, text=True, timeout=60)
-            if r.returncode != 0:
-                # Fallback: use mpg123 or play
-                r = subprocess.run(["mpg123", "-q", output], capture_output=True, text=True, timeout=60)
-                if r.returncode != 0:
-                    print(f"[tts] could not play (install ffplay or mpg123)", file=sys.stderr)
+            # Try multiple players in order: ffplay, mpg123, aplay (won't work for mp3), paplay
+            players = [
+                (["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", output], "ffplay"),
+                (["mpg123", "-q", output], "mpg123"),
+                (["paplay", output], "paplay"),
+                (["play", output], "sox/play"),
+            ]
+            played = False
+            for cmd, name in players:
+                r = subprocess.run(["which", cmd[0]], capture_output=True, text=True)
+                if r.returncode == 0:
+                    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                    if r.returncode == 0:
+                        played = True
+                        break
+            if not played:
+                print(f"[tts] could not play (no ffplay/mpg123/paplay/play found)", file=sys.stderr)
+                print(f"[tts] file saved at: {output}", file=sys.stderr)
         return output
     except Exception as e:
         print(f"[tts] error: {e}", file=sys.stderr)
@@ -531,15 +541,16 @@ def cmd_voice(duration=5, device="default", model=None, no_rag=False, voice="en-
     print(f"{'='*70}")
 
 
-def cmd_speak(question, voice="en-US-AriaNeural", play=True):
+def cmd_speak(question, voice="en-US-AriaNeural", play=True, output=None):
     """Method 3b: text in, voice out."""
     print(f"\n[TEXT → VOICE]: {question}")
     answer, elapsed, sid = gpu_execute(question, cpu_summary=None)
     print(f"\n⏱ {elapsed:.2f}s")
     print(f"\nAnswer:\n{answer}")
 
-    print(f"\n[TTS] speaking with voice {voice}...")
-    speak_text(answer[:5000], voice=voice, play=play)
+    out_path = output or "/tmp/voice_output.mp3"
+    print(f"\n[TTS] speaking with voice {voice} → {out_path}")
+    speak_text(answer[:5000], voice=voice, output=out_path, play=play)
 
 
 def cmd_listen(duration=5, device="default", language="en"):
@@ -608,6 +619,7 @@ def main():
     p_speak.add_argument("question", help="Text to ask")
     p_speak.add_argument("--voice", default="en-US-AriaNeural", help="Edge TTS voice name")
     p_speak.add_argument("--no-play", action="store_true", help="Just generate the audio file, don't play it")
+    p_speak.add_argument("--output", "-o", help="Custom output file path (e.g. /tmp/my_answer.mp3)")
 
     p_listen = sub.add_parser("listen", help="Voice in, text out (no TTS)")
     p_listen.add_argument("--duration", "-d", type=int, default=5, help="Recording duration in seconds")
@@ -630,7 +642,7 @@ def main():
         cmd_voice(duration=args.duration, device=args.device,
                   model=args.model, no_rag=args.no_rag, voice=args.voice)
     elif args.cmd == "speak":
-        cmd_speak(args.question, voice=args.voice, play=not args.no_play)
+        cmd_speak(args.question, voice=args.voice, play=not args.no_play, output=args.output)
     elif args.cmd == "listen":
         cmd_listen(duration=args.duration, device=args.device, language=args.language)
     elif args.cmd == "voices":
