@@ -38,12 +38,14 @@ LOG_FILES = {
 }
 
 # AI Profiles — each AI gets a distinct persona
+# marked with 'local' = runs on your hardware, 'cloud' = Ollama Cloud
 AI_PROFILES = {
     "GLM-5.2": {
         "name": "GLM-5.2",
+        "type": "cloud",
         "emoji": "🟢",
         "avatar_color": "#10a37f",
-        "role": "General-Purpose Professor",
+        "role": "Cloud Professor",
         "personality": "Careful, structured, gives detailed step-by-step reasoning",
         "specialty": "Software architecture, debugging, code review",
         "avatar_svg": '''<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
@@ -60,9 +62,10 @@ AI_PROFILES = {
     },
     "minimax-m3": {
         "name": "minimax-m3",
+        "type": "cloud",
         "emoji": "🟣",
         "avatar_color": "#a855f7",
-        "role": "Chat Specialist",
+        "role": "Cloud Chat Specialist",
         "personality": "Fast, conversational, builds on others' answers",
         "specialty": "Conversational AI, synthesis, practical answers",
         "avatar_svg": '''<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
@@ -79,9 +82,10 @@ AI_PROFILES = {
     },
     "nemotron-3-ultra": {
         "name": "nemotron-3-ultra",
+        "type": "cloud",
         "emoji": "🔴",
         "avatar_color": "#ef4444",
-        "role": "Deep Reasoner",
+        "role": "Cloud Deep Reasoner",
         "personality": "Thorough, logical, catches subtle errors, pushes back on weak arguments",
         "specialty": "Reasoning, math, finding bugs in others' thinking",
         "avatar_svg": '''<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
@@ -98,9 +102,10 @@ AI_PROFILES = {
     },
     "deepseek-r1:1.5b": {
         "name": "deepseek-r1:1.5b",
+        "type": "local",
         "emoji": "🟠",
         "avatar_color": "#f59e0b",
-        "role": "CPU Meta-Reasoner",
+        "role": "🖥️ LOCAL · CPU Meta-Reasoner",
         "personality": "Quick, concise, focused — plans the approach, doesn't answer",
         "specialty": "Thinking/planning, fast local pre-processing",
         "avatar_svg": '''<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
@@ -117,9 +122,10 @@ AI_PROFILES = {
     },
     "llama3.1:8b": {
         "name": "llama3.1:8b",
+        "type": "local",
         "emoji": "🔵",
         "avatar_color": "#3b82f6",
-        "role": "Local Executor (GPU)",
+        "role": "🖥️ LOCAL · GPU Executor",
         "personality": "Reliable workhorse, follows plans, gives thorough answers",
         "specialty": "General execution, RAG, business logic",
         "avatar_svg": '''<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
@@ -451,6 +457,69 @@ def get_state():
     disk = get_disk()
     HISTORY.update(cpu, ram, vram["percent"], gpu_temp, cpu_temp, disk)
 
+    # Other local models installed but not in active profiles
+    active_profile_names = set(AI_PROFILES.keys())
+    other_models = []
+    try:
+        r = subprocess.run(['ollama', 'list'], capture_output=True, text=True, timeout=5)
+        lines = r.stdout.split('\n')
+        if len(lines) > 1:
+            header = lines[0].split()
+            # Find SIZE column
+            try:
+                size_col = header.index('SIZE')
+            except ValueError:
+                size_col = 2
+            for line in lines[1:]:
+                parts = line.split()
+                if len(parts) <= size_col:
+                    continue
+                name = parts[0]
+                size_str = parts[size_col]
+                if name in active_profile_names:
+                    continue
+                # Parse size (handles "1.1", "4.7", "274M", etc.)
+                size_gb = 0
+                try:
+                    if size_str.endswith('GB'):
+                        size_gb = float(size_str[:-2])
+                    elif size_str.endswith('MB') or size_str.endswith('M'):
+                        size_gb = float(size_str.rstrip('MB').rstrip('M')) / 1024
+                    elif size_str.endswith('B'):
+                        size_gb = float(size_str[:-1]) / 1e9
+                    else:
+                        size_gb = float(size_str)
+                except Exception:
+                    size_gb = 0
+                # Skip cloud placeholders with 0 size
+                if size_gb == 0 and ':cloud' in name:
+                    continue
+                # Determine emoji by purpose
+                emoji = '📦'
+                use = ''
+                if 'vision' in name or 'llava' in name or 'moondream' in name:
+                    emoji = '👁️'
+                    use = 'vision'
+                elif 'coder' in name or 'qwen' in name:
+                    emoji = '⌨️'
+                    use = 'code'
+                elif 'embed' in name:
+                    emoji = '🔢'
+                    use = 'embeddings'
+                elif 'r1' in name:
+                    emoji = '🤔'
+                    use = 'reasoning'
+                else:
+                    use = 'general'
+                other_models.append({
+                    'name': name,
+                    'size_gb': f'{size_gb:.1f}' if size_gb else '?',
+                    'use': use,
+                    'emoji': emoji,
+                })
+    except Exception:
+        pass
+
     return {
         "timestamp": time.time(),
         "timestamp_human": time.strftime("%H:%M:%S"),
@@ -476,6 +545,7 @@ def get_state():
         "interactions": get_interactions(),
         "memory_count": get_memory_count(),
         "skills_count": get_skills_count(),
+        "other_local_models": other_models,
         "ai_profiles": AI_PROFILES,
     }
 
@@ -1008,8 +1078,53 @@ function makeSparkline(data, color, max=100) {
   </svg>`;
 }
 
+function renderAiGrid(html, profiles, activeAIs, currentTopics, aiSuggestionCounts, jobs) {
+  for (const [key, profile] of profiles) {
+    const isBusy = activeAIs.has(key);
+    const suggestionCount = aiSuggestionCounts[key] || 0;
+    const currentJob = jobs.find(j => j.active_ais.includes(key));
+
+    html.push(`<div class="ai-card ${isBusy ? 'busy' : ''}" onclick='showModal("${key}")'>`);
+    html.push(`<div class="ai-header">`);
+    html.push(`<div class="ai-avatar">${profile.avatar_svg}</div>`);
+    html.push(`<div class="ai-info">`);
+    html.push(`<div class="ai-name">${profile.emoji} ${profile.name}</div>`);
+    html.push(`<div class="ai-role">${escapeHtml(profile.role)}</div>`);
+    html.push(`</div></div>`);
+    html.push(`<div class="ai-status">`);
+    if (isBusy) {
+      html.push(`<span class="busy-dot"></span> Working now${currentJob ? ` on <strong>${currentJob.name}</strong>` : ''}`);
+    } else {
+      html.push(`<span style="color:#6e7681;">💤 Idle</span>`);
+    }
+    if (suggestionCount > 0) {
+      html.push(`<div style="margin-top:4px;font-size:11px;color:#8b949e;">💡 ${suggestionCount} suggestions contributed</div>`);
+    }
+    html.push(`</div>`);
+
+    if (currentJob && currentJob.current_topic) {
+      html.push(`<div class="ai-current-task">`);
+      html.push(`<span class="label">📍 Current task</span>`);
+      html.push(escapeHtml(currentJob.current_topic));
+      html.push(`</div>`);
+    }
+
+    html.push(`<div style="margin-top:8px;font-size:11px;color:#6e7681;">${escapeHtml(profile.personality)}</div>`);
+    html.push(`</div>`);
+  }
+}
+
 function render() {
   const html = [];
+
+  // Active AIs (computed early so AI cards can use them)
+  const activeAIs = new Set();
+  state.jobs.forEach(j => j.active_ais.forEach(a => activeAIs.add(a)));
+  const currentTopics = {};
+  state.jobs.forEach(j => {
+    if (j.current_topic) currentTopics[j.name] = j.current_topic;
+  });
+  const aiSuggestionCounts = state.suggestions.by_ai || {};
 
   // === SYSTEM STATS SECTION ===
   html.push('<h2>🖥️ System</h2>');
@@ -1136,52 +1251,34 @@ function render() {
     html.push('</div>');
   }
 
-  // === AI PROFILES ===
-  html.push('<h2>🤖 Your AI Team</h2>');
+  // === AI PROFILES — separated by LOCAL vs CLOUD ===
+  const localProfiles = Object.entries(state.ai_profiles).filter(([k, p]) => p.type === 'local');
+  const cloudProfiles = Object.entries(state.ai_profiles).filter(([k, p]) => p.type === 'cloud');
+
+  html.push('<h2>🖥️ LOCAL AI Models (yours)</h2>');
   html.push('<div class="ai-grid">');
-
-  const activeAIs = new Set();
-  state.jobs.forEach(j => j.active_ais.forEach(a => activeAIs.add(a)));
-  const currentTopics = {};
-  state.jobs.forEach(j => {
-    if (j.current_topic) currentTopics[j.name] = j.current_topic;
-  });
-  const aiSuggestionCounts = state.suggestions.by_ai || {};
-
-  for (const [key, profile] of Object.entries(state.ai_profiles)) {
-    const isBusy = activeAIs.has(key);
-    const suggestionCount = aiSuggestionCounts[key] || 0;
-    const currentJob = state.jobs.find(j => j.active_ais.includes(key));
-
-    html.push(`<div class="ai-card ${isBusy ? 'busy' : ''}" onclick='showModal("${key}")'>`);
-    html.push(`<div class="ai-header">`);
-    html.push(`<div class="ai-avatar">${profile.avatar_svg}</div>`);
-    html.push(`<div class="ai-info">`);
-    html.push(`<div class="ai-name">${profile.emoji} ${profile.name}</div>`);
-    html.push(`<div class="ai-role">${profile.role}</div>`);
-    html.push(`</div></div>`);
-    html.push(`<div class="ai-status">`);
-    if (isBusy) {
-      html.push(`<span class="busy-dot"></span> Working now${currentJob ? ` on <strong>${currentJob.name}</strong>` : ''}`);
-    } else {
-      html.push(`<span style="color:#6e7681;">💤 Idle</span>`);
-    }
-    if (suggestionCount > 0) {
-      html.push(`<div style="margin-top:4px;font-size:11px;color:#8b949e;">💡 ${suggestionCount} suggestions contributed</div>`);
-    }
-    html.push(`</div>`);
-
-    if (currentJob && currentJob.current_topic) {
-      html.push(`<div class="ai-current-task">`);
-      html.push(`<span class="label">📍 Current task</span>`);
-      html.push(escapeHtml(currentJob.current_topic));
-      html.push(`</div>`);
-    }
-
-    html.push(`<div style="margin-top:8px;font-size:11px;color:#6e7681;">${escapeHtml(profile.personality)}</div>`);
-    html.push(`</div>`);
-  }
+  renderAiGrid(html, localProfiles, activeAIs, currentTopics, aiSuggestionCounts, state.jobs);
   html.push('</div>');
+
+  html.push('<h2>☁️ Cloud AI Models (3 teachers)</h2>');
+  html.push('<div class="ai-grid">');
+  renderAiGrid(html, cloudProfiles, activeAIs, currentTopics, aiSuggestionCounts, state.jobs);
+  html.push('</div>');
+
+  // === OTHER LOCAL MODELS (installed but not in active use) ===
+  if (state.other_local_models && state.other_local_models.length > 0) {
+    html.push('<h2>📦 Other Installed Local Models</h2>');
+    html.push('<div style="display:flex;flex-wrap:wrap;gap:8px;">');
+    state.other_local_models.forEach(m => {
+      html.push(`<div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px 12px;font-size:12px;color:#8b949e;display:flex;gap:8px;align-items:center;">
+        <span>${m.emoji}</span>
+        <span style="color:#c9d1d9;font-weight:600;">${escapeHtml(m.name)}</span>
+        <span>${m.size_gb} GB</span>
+        <span style="color:#6e7681;font-size:10px;">${escapeHtml(m.use)}</span>
+      </div>`);
+    });
+    html.push('</div>');
+  }
 
   // === AI-TO-AI INTERACTIONS ===
   if (state.interactions && state.interactions.length > 0) {
