@@ -13,16 +13,24 @@ Architecture:
 
 Benefits:
   - CPU thinker runs in parallel with GPU work (doesn't compete for VRAM)
-  - CPU thought gives the GPU model a "first draft" to refine
-  - Always-on: even when GPU is busy with Ollama inference, CPU is ready
-  - Cheap: 1.5B model on CPU = ~3s per thought
+  Models:
+    - CPU thinker: deepseek-r1:1.5b (1.1 GB, fast on CPU, reasoning)
+    - GPU executor: minimax-m3 (cloud, default) or llama3.1:8b (local)
 
-Usage:
-  ./vexin_dual_brain.py chat "What's the SAS tax threshold in Paraguay?"
-  ./vexin_dual_brain.py think "complex question"     # CPU-only
-  ./vexin_dual_brain.py execute "what to do"         # GPU only
-  ./vexin_dual_brain.py dual "question"              # both
-  ./vexin_dual_brain.py info                          # status
+  Methods:
+    Method 1 (dual): think on CPU, execute on GPU
+    Method 2 (text): text in, text out (--think, --execute)
+    Method 3 (voice): speak to ask, listen to answer (mic + whisper + edge-tts)
+
+  Usage:
+    ./vexin_dual_brain.py dual "What's the SAS tax threshold in Paraguay?"
+    ./vexin_dual_brain.py think "complex question"     # CPU-only
+    ./vexin_dual_brain.py execute "what to do"         # GPU only
+    ./vexin_dual_brain.py voice --duration 5           # mic in, voice out
+    ./vexin_dual_brain.py speak "say something"        # text in, voice out
+    ./vexin_dual_brain.py listen --duration 5          # mic in, text out
+    ./vexin_dual_brain.py voices                       # list TTS voices
+    ./vexin_dual_brain.py info                          # status
 
 Models:
   - CPU thinker: deepseek-r1:1.5b (1.1 GB, fast on CPU, reasoning)
