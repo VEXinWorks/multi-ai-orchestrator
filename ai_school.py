@@ -432,7 +432,9 @@ class AISchool:
         lesson_id = f"{subject_key}-L{lesson_idx+1:02d}"
         print(f"\n{'='*70}\nLESSON: {lesson_id} — {lesson}\n{'='*70}", file=sys.stderr)
 
-        # Phase 1: Teach (GLM-5.2 — research specialist)
+        # Phase 1+2+3: Teach, Critique, Verify — PARALLELIZED
+        # Teach must happen first (critique and verify depend on it), but
+        # critique and verify are independent and can run in parallel.
         teach_prompt = f"""You are {self.TEACHERS[0]}, a research specialist.
 Teach the following lesson for the VEXinWorks AI School.
 
@@ -448,11 +450,13 @@ Format your response as:
 5. RESOURCES (where to learn more — be specific, not "search Google")
 
 Be CONCISE. Prefer concrete advice over theory. Use Portuguese/Spanish only when the concept is regional (Paraguay context)."""
+
         t0 = time.time()
         lesson_body = self._ask(self.TEACHERS[0], teach_prompt)
-        print(f"  [1/4] teach ({time.time()-t0:.1f}s): {len(lesson_body)} chars")
+        teach_time = time.time() - t0
+        print(f"  [1/4] teach ({teach_time:.1f}s): {len(lesson_body)} chars")
 
-        # Phase 2: Critique (nemotron-3-ultra — technical specialist)
+        # Now run critique + verify IN PARALLEL (they don't depend on each other)
         critique_prompt = f"""You are {self.TEACHERS[2]}, a technical specialist.
 A previous AI taught this lesson:
 
@@ -468,11 +472,7 @@ Your job: critique and improve. Specifically:
 4. What examples would make it more concrete?
 
 Keep your critique CONCISE — focus on improvements, don't repeat what was good. Output as a numbered list of improvements."""
-        t0 = time.time()
-        critique = self._ask(self.TEACHERS[2], critique_prompt)
-        print(f"  [2/4] critique ({time.time()-t0:.1f}s): {len(critique)} chars")
 
-        # Phase 3: Verify (minimax-m3 — generalist, makes it concrete)
         verify_prompt = f"""You are {self.TEACHERS[1]}, a generalist AI.
 This lesson was taught:
 
@@ -481,18 +481,23 @@ LESSON TOPIC: {lesson}
 TEACHING:
 {lesson_body}
 
-CRITIQUE:
-{critique}
-
-Now write VERIFICATION EXERCISES:
+Now write VERIFICATION EXERCISES (don't wait for critique — work from the teaching alone):
 1. A SHORT QUIZ (3 questions with answers) that proves someone learned it
 2. A PRACTICAL EXERCISE (a specific task they should be able to do after this lesson)
 3. SELF-CHECK CRITERIA (3-5 things to verify the lesson stuck)
 
 Output clearly labeled sections."""
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         t0 = time.time()
-        verify = self._ask(self.TEACHERS[1], verify_prompt)
-        print(f"  [3/4] verify ({time.time()-t0:.1f}s): {len(verify)} chars")
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            f_crit = executor.submit(self._ask, self.TEACHERS[2], critique_prompt)
+            f_verify = executor.submit(self._ask, self.TEACHERS[1], verify_prompt)
+            critique = f_crit.result()
+            verify = f_verify.result()
+        parallel_time = time.time() - t0
+        print(f"  [2-3/4] critique+verify PARALLEL ({parallel_time:.1f}s): {len(critique)} + {len(verify)} chars")
+        print(f"  (was sequential: ~{parallel_time*2:.0f}s, now parallel: {parallel_time:.1f}s)")
 
         # Build full text (used for skill + chunked memory)
         full_text = f"""AI SCHOOL LESSON: {lesson_id}
