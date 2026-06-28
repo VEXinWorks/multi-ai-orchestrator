@@ -5,12 +5,22 @@ vexin_talk.py — One-command voice chat with the local AI
 Just speak, then listen to the answer. Designed for hands-free use.
 Records from default mic, transcribes, asks dual brain, speaks answer.
 
+Models available:
+  Local (no cloud, runs on your GPU):
+    - llama3.1:8b (default, 4.9 GB, ~90 tok/s, best general)
+    - llama3.2:3b (faster, 2.0 GB, simpler tasks)
+    - qwen2.5-coder:7b (code questions)
+    - deepseek-r1:8b (slow but thinks deeply)
+  Cloud (slower latency, more capable):
+    - minimax-m3 (default if --cloud, fast chat)
+    - glm-5.2, nemotron-3-ultra (use --cloud-model)
+
 Usage:
-  vexin_talk.py                  # 5s record, dual brain, speak
-  vexin_talk.py -d 10            # 10s record
-  vexin_talk.py -d 10 --voice es-MX-JorgeNeural  # Spanish voice
-  vexin_talk.py --loop           # continuous conversation mode
-  vexin_talk.py --text           # just type, no mic
+  ./vexin_talk.py                          # 5s voice in, voice out (local llama3.1)
+  ./vexin_talk.py --cloud                  # use cloud model instead
+  ./vexin_talk.py -d 10 --local-model qwen2.5-coder:7b  # local coder for code Qs
+  ./vexin_talk.py --loop                   # keep talking
+  ./vexin_talk.py --text "hi"              # just type, get voice answer
 """
 
 import argparse
@@ -26,7 +36,8 @@ from vexin_dual_brain import cpu_think, gpu_execute, speak_text, record_audio, t
 
 
 def talk_once(duration=5, device="default", voice="en-US-AriaNeural",
-              model=None, no_rag=False, language="en", silent=False):
+              local_model="llama3.1:8b", cloud=False, cloud_model="minimax-m3",
+              no_rag=False, language="en", silent=False):
     """One voice-in, voice-out conversation."""
     print()
     print("=" * 60)
@@ -48,12 +59,19 @@ def talk_once(duration=5, device="default", voice="en-US-AriaNeural",
     if not silent:
         print()
 
-    # Think + Execute
+    # Think
     print("🧠 CPU thinking...")
     thinking, summary, cpu_time = cpu_think(question)
     print(f"  ⏱  {cpu_time:.2f}s")
 
-    print("⚡ GPU executing...")
+    # Execute on local OR cloud
+    if cloud:
+        model = cloud_model
+        print(f"☁️  GPU (cloud) executing with {model}...")
+    else:
+        model = local_model
+        print(f"💻 GPU (local) executing with {model}...")
+
     answer, gpu_time, sid = gpu_execute(question, summary, model=model, use_rag=not no_rag)
     print(f"  ⏱  {gpu_time:.2f}s")
 
@@ -87,7 +105,12 @@ Examples:
                         help="ALSA device (default, plughw:1,0, etc)")
     parser.add_argument("--voice", default="en-US-AriaNeural",
                         help="Edge TTS voice (try: es-MX-JorgeNeural for Spanish)")
-    parser.add_argument("--model", help="Override GPU model")
+    parser.add_argument("--cloud", action="store_true",
+                        help="Use cloud model instead of local (default: local)")
+    parser.add_argument("--local-model", default="llama3.1:8b",
+                        help="Local ollama model (llama3.1:8b, llama3.2:3b, qwen2.5-coder:7b, etc)")
+    parser.add_argument("--cloud-model", default="minimax-m3",
+                        help="Cloud model (minimax-m3, glm-5.2, nemotron-3-ultra)")
     parser.add_argument("--no-rag", action="store_true", help="Disable RAG")
     parser.add_argument("--language", default="en", help="STT language (en, es, etc)")
     parser.add_argument("--loop", action="store_true", help="Continuous conversation mode")
@@ -100,15 +123,27 @@ Examples:
     print("Loading Whisper model...")
     get_whisper()
 
+    # Pick the model
+    if args.cloud:
+        active_model = args.cloud_model
+        backend = "cloud"
+    else:
+        active_model = args.local_model
+        backend = "local"
+    print(f"GPU executor: {active_model} ({backend})")
+
     if args.text:
         # Direct text mode
         question = args.text
-        print(f"📝 Question: \"{question}\"")
-        print("🧠 CPU thinking...")
+        print(f"\n📝 Question: \"{question}\"")
+        print(f"🧠 CPU thinking...")
         thinking, summary, cpu_time = cpu_think(question)
         print(f"  ⏱  {cpu_time:.2f}s")
-        print("⚡ GPU executing...")
-        answer, gpu_time, sid = gpu_execute(question, summary, model=args.model, use_rag=not args.no_rag)
+        if args.cloud:
+            print(f"☁️  GPU (cloud) executing with {active_model}...")
+        else:
+            print(f"💻 GPU (local) executing with {active_model}...")
+        answer, gpu_time, sid = gpu_execute(question, summary, model=active_model, use_rag=not args.no_rag)
         print(f"  ⏱  {gpu_time:.2f}s")
         print(f"\n💬 Answer: {answer}\n")
         out_path = f"/tmp/talk_{int(time.time())}.mp3"
@@ -129,7 +164,9 @@ Examples:
                     duration=args.duration,
                     device=args.device,
                     voice=args.voice,
-                    model=args.model,
+                    local_model=args.local_model,
+                    cloud=args.cloud,
+                    cloud_model=args.cloud_model,
                     no_rag=args.no_rag,
                     language=args.language,
                     silent=args.silent,
@@ -143,7 +180,9 @@ Examples:
             duration=args.duration,
             device=args.device,
             voice=args.voice,
-            model=args.model,
+            local_model=args.local_model,
+            cloud=args.cloud,
+            cloud_model=args.cloud_model,
             no_rag=args.no_rag,
             language=args.language,
             silent=args.silent,
