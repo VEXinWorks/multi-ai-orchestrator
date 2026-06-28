@@ -25,6 +25,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import urllib.request
@@ -542,12 +543,23 @@ VERIFIED BY: minimax-m3
                     description=f"From AI School {lesson_id}: {lesson}"[:200],
                     category=subject_key,
                     procedure=[lesson_body, critique],
-                    pitfalls=[f"Apply verification before claiming mastery", "Re-read critique section"],
+                    pitfalls=["Apply verification before claiming mastery", "Re-read critique section"],
                     verification=[verify],
                 )
                 print(f"  [skill] {skill_name}: {skill_result}", file=sys.stderr)
             except Exception as _e:
                         pass
+
+        # Phase 5: Local practice — the local AI actually TRIES the exercise
+        # This makes the local AI learn by DOING, not just by reading
+        local_practice_result = None
+        try:
+            local_practice_result = self._local_practice(
+                lesson_id, lesson, verify,
+                use_model="llama3.1:8b",  # default local student
+            )
+        except Exception as _e:
+            print(f"  [local_practice] error: {_e}", file=sys.stderr)
 
         return {
             "lesson_id": lesson_id,
@@ -558,7 +570,91 @@ VERIFIED BY: minimax-m3
             "verify_chars": len(verify),
             "memory": mem_result,
             "skill": skill_result,
+            "local_practice": local_practice_result,
         }
+
+    def _local_practice(self, lesson_id, topic, verify_text,
+                        use_model="llama3.1:8b", timeout=180):
+        """Have the local AI actually attempt the verification exercise.
+
+        This is how the local AI learns: it READS the cloud AI's teaching,
+        then PRACTICES by solving a concrete problem. The result is stored
+        to memory as 'local_practice_{lesson_id}' so we can see if the
+        local AI actually understood.
+        """
+        print(f"  [5/5] local practice ({use_model})...", file=sys.stderr)
+        t0 = time.time()
+
+        # Extract the practical exercise from verify text
+        # Look for "PRACTICAL EXERCISE" section
+        exercise = topic  # fallback to full topic
+        if "PRACTICAL EXERCISE" in verify_text:
+            parts = verify_text.split("PRACTICAL EXERCISE", 1)
+            if len(parts) > 1:
+                exercise = parts[1][:800]
+
+        practice_prompt = f"""You are a local AI student (model: {use_model}) who just learned this lesson:
+
+LESSON: {topic}
+
+VERIFICATION EXERCISE:
+{verify_text[:1500]}
+
+Your task: SOLVE the practical exercise. Be specific and concrete.
+If it's a code exercise, write working code. If it's a planning exercise, give concrete steps.
+If it's a knowledge check, demonstrate you understand by explaining it back.
+
+Format: Brief intro (1-2 sentences) then your actual answer/solution."""
+
+        try:
+            r = subprocess.run(
+                ['curl', '-sS', '-X', 'POST', 'http://localhost:11434/api/generate',
+                 '-H', 'Content-Type: application/json',
+                 '-d', json.dumps({
+                     "model": use_model,
+                     "prompt": practice_prompt,
+                     "stream": False,
+                     "options": {"num_predict": 1000, "temperature": 0.3, "num_ctx": 4096},
+                     "keep_alive": "15m",
+                 }),
+                 '--max-time', str(timeout)],
+                capture_output=True, text=True, timeout=timeout + 10,
+            )
+
+            if r.returncode != 0:
+                print(f"  [local_practice] curl err: {r.stderr[:200]}", file=sys.stderr)
+                return None
+
+            data = json.loads(r.stdout)
+            practice_answer = data.get("response", "")
+
+            if practice_answer:
+                # Save to memory as "local_practice_{lesson_id}"
+                mem_text = f"""LOCAL PRACTICE {lesson_id} (by {use_model})
+TOPIC: {topic}
+
+EXERCISE:
+{verify_text[:800]}
+
+LOCAL AI ANSWER:
+{practice_answer}
+"""
+                self.ody.add_memory(
+                    mem_text,
+                    source=f"local_practice_{use_model.replace(':', '_').replace('.', '_')}",
+                )
+                elapsed = time.time() - t0
+                print(f"  [5/5] local practice ({elapsed:.1f}s): {len(practice_answer)} chars", file=sys.stderr)
+                return {
+                    "model": use_model,
+                    "answer_chars": len(practice_answer),
+                    "elapsed": elapsed,
+                }
+        except subprocess.TimeoutExpired:
+            print(f"  [local_practice] timeout after {timeout}s", file=sys.stderr)
+        except Exception as e:
+            print(f"  [local_practice] err: {e}", file=sys.stderr)
+        return None
 
     def run_curriculum(self, subject_key, max_lessons=None, skip_lessons=None):
         """Run all (or some) lessons in a curriculum."""
