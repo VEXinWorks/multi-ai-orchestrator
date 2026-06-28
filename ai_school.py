@@ -534,11 +534,34 @@ VERIFIED BY: minimax-m3
                   file=sys.stderr)
         return results
 
+    def _get_done_lessons(self):
+        """Scan memory to find lessons already done in this subject."""
+        result = self.ody._request("GET", "/api/memory/timeline", params={"limit": 500})
+        if not isinstance(result, dict):
+            return set()
+        entries = result.get("timeline", [])
+        done = set()
+        for entry in entries:
+            src = entry.get("source", "")
+            text = entry.get("text", "")
+            # Format: "AI SCHOOL LESSON <lesson_id> PART ..."
+            if src.startswith("ai_school_") and "AI SCHOOL LESSON" in text:
+                try:
+                    parts = text.split("AI SCHOOL LESSON")[1].split()
+                    if parts:
+                        lid = parts[0]
+                        done.add(lid)
+                except Exception:
+                    pass
+        return done
+
     def run_loop(self, max_total_lessons=10, per_session_pause=5):
-        """Run a batch across multiple curricula. Save progress."""
-        print(f"AI SCHOOL — running {max_total_lessons} lessons\n", file=sys.stderr)
+        """Run a batch across multiple curricula. Skip already-done lessons."""
+        print(f"AI SCHOOL — running up to {max_total_lessons} NEW lessons\n", file=sys.stderr)
         all_subjects = list(CURRICULUM.keys())
         count = 0
+        done = self._get_done_lessons()
+        print(f"  found {len(done)} already-done lessons, skipping them", file=sys.stderr)
         for subject_key in all_subjects:
             if count >= max_total_lessons:
                 break
@@ -546,11 +569,15 @@ VERIFIED BY: minimax-m3
             for i, lesson in enumerate(subject["lessons"]):
                 if count >= max_total_lessons:
                     break
+                lid = f"{subject_key}-L{i+1:02d}"
+                if lid in done:
+                    continue
                 r = self.teach_lesson(subject_key, i)
                 count += 1
+                done.add(lid)  # remember we did it
                 # Pause between lessons to avoid rate-limit cascade
                 time.sleep(per_session_pause)
-        return {"lessons_run": count}
+        return {"lessons_run": count, "skipped_existing": len(done) - count}
 
     def status(self):
         """Show curriculum progress."""
