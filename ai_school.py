@@ -346,12 +346,13 @@ class OdysseusClient:
             "version": "1.0",
             "source": "ai_school",
         }
-        # First check if skill already exists
+        # First check if skill already exists (case-insensitive)
         try:
             existing = self._request("GET", "/api/skills")
             skills_list = existing.get("skills", []) if isinstance(existing, dict) else existing
+            name_lower = name.lower()
             for s in skills_list:
-                if s.get("name") == name:
+                if s.get("name", "").lower() == name_lower:
                     # Update the existing skill
                     sid = s.get("id", name)
                     body = urllib.parse.urlencode({
@@ -537,7 +538,7 @@ VERIFIED BY: minimax-m3
         skill_result = None
         if "ACTIONABLE STEPS" in lesson_body or "PROCEDURE" in lesson_body:
             try:
-                skill_name = f"school-{lesson_id}".replace("_", "-")
+                skill_name = f"school-{lesson_id}".replace("_", "-").lower()
                 skill_result = self.ody.add_skill(
                     name=skill_name[:64],
                     description=f"From AI School {lesson_id}: {lesson}"[:200],
