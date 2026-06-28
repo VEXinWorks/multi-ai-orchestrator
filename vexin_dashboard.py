@@ -259,31 +259,81 @@ def get_load():
 
 
 def get_processes():
-    """Get top CPU processes."""
+    """Get top CPU processes. Excludes dashboard itself and ps."""
     try:
-        r = subprocess.run(['ps', '-eo', 'pid,pcpu,pmem,comm', '--sort=-pcpu'],
+        my_pid = os.getpid()
+        r = subprocess.run(['ps', '-eo', 'pid,ppid,pcpu,pmem,comm', '--sort=-pcpu'],
                           capture_output=True, text=True, timeout=3)
-        lines = r.stdout.split('\n')[1:6]  # top 5
+        lines = r.stdout.split('\n')[1:20]  # check top 20
         procs = []
         for line in lines:
-            parts = line.split(None, 3)
-            if len(parts) >= 4:
+            parts = line.split(None, 4)
+            if len(parts) >= 5:
+                pid = int(parts[0])
+                comm = parts[4]
+                # Skip our own ps call and the dashboard process
+                if pid == my_pid or comm in ('ps',):
+                    continue
                 procs.append({
-                    "pid": parts[0],
-                    "cpu": float(parts[1]),
-                    "mem": float(parts[2]),
-                    "name": parts[3][:30],
+                    "pid": str(pid),
+                    "cpu": float(parts[2]),
+                    "mem": float(parts[3]),
+                    "name": parts[4][:30],
                 })
         return procs
     except Exception:
         return []
 
 
+def read_truth_status(max_age_seconds=120):
+    """Read /tmp/ai_status.json written by autonomous_monitor.sh.
+
+    Source of truth for what each AI is CURRENTLY doing.
+    Returns {} if the file is stale or missing.
+    """
+    path = Path("/tmp/ai_status.json")
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+        ts = data.get("timestamp", 0)
+        if time.time() - ts > max_age_seconds:
+            return {}
+        # The monitor stores worker dicts shaped exactly like get_jobs() below.
+        return data.get("workers", {})
+    except Exception:
+        return {}
+
+
+# Workers that don't have a log entry in LOG_FILES but the truth file emits.
+EXTRA_LOG_FILES = {
+    "orchestrator_status":  "/tmp/orchestrator-status.log",
+}
+
+
 def get_jobs():
-    """Get all running AI jobs."""
+    """Get all running AI jobs with rich metadata.
+
+    Priority:
+      1. /tmp/ai_status.json (truth — written every 5 min by autonomous_monitor.sh)
+      2. Fall back to ps + log scraping if truth is stale or absent.
+    """
+    truth = read_truth_status()
+    if truth:
+        # Backfill LOG_FILE field for jobs that the monitor wrote but
+        # the dashboard JS hasn't been told about.
+        all_logs = {**LOG_FILES, **EXTRA_LOG_FILES}
+        out = []
+        for name, j in truth.items():
+            j = dict(j)
+            j.setdefault("name", name)
+            j.setdefault("log_file", all_logs.get(name, ""))
+            out.append(j)
+        return out
+
     r = subprocess.run(
         ["bash", "-c",
-         "ps -ef | grep -E 'audit_all|research_business|deep_review|teach_prod|research_paraguay|business_plan|apply_best|generate_patches|ai_school.py' | grep -v grep"],
+         "ps -ef | grep -E 'audit_all|research_business|deep_review|teach_prod|research_paraguay|business_plan|apply_best|generate_patches|ai_school.py|orchestrator' | grep -v grep"],
         capture_output=True, text=True, timeout=5,
     )
     jobs = []
@@ -296,13 +346,6 @@ def get_jobs():
         pid = parts[1]
         etime = parts[4]
         cmd = parts[7]
-        # Get CPU/mem for this PID
-        try:
-            with open(f'/proc/{pid}/stat') as f:
-                stat = f.read().split()
-            cpu_pct = float(stat[13]) / max(1, int(stat[14])) * 100
-        except Exception:
-            cpu_pct = 0
 
         job_name = None
         for name in LOG_FILES.keys():
@@ -311,18 +354,19 @@ def get_jobs():
                 break
         if not job_name and "ai_school.py" in cmd:
             job_name = "ai_school"
+        if not job_name and "multi_ai_orchestrator.py" in cmd:
+            job_name = "orchestrator_status"
         if not job_name:
             continue
 
         log_file = LOG_FILES.get(job_name, "")
-
-        # Identify active AIs in log
         active_ais, current_topic = identify_active_ais(log_file)
+
         log_tail = []
         if log_file and os.path.exists(log_file):
             try:
                 with open(log_file, 'r', errors='ignore') as f:
-                    log_tail = f.read().splitlines()[-15:]
+                    log_tail = f.read().splitlines()[-12:]
             except Exception:
                 pass
 
@@ -330,7 +374,6 @@ def get_jobs():
             "name": job_name,
             "pid": pid,
             "etime": etime,
-            "cpu_pct": round(cpu_pct, 1),
             "log_file": log_file,
             "log_tail": log_tail,
             "active_ais": active_ais,
@@ -419,32 +462,18 @@ def get_interactions():
 
 def get_memory_count():
     try:
-        with open("/tmp/c.txt") as f:
-            cookie = f.read().strip().replace("odysseus_session ", "")
-        import urllib.request
-        req = urllib.request.Request(
-            "http://localhost:7000/api/memory/timeline?limit=1",
-            headers={"Cookie": f"odysseus_session={cookie}"},
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            d = json.loads(resp.read())
-            return len(d.get("timeline", []))
+        from vexin_auth import authenticated_request
+        d = authenticated_request("GET", "/api/memory/timeline", params={"limit": 1})
+        return len(d.get("timeline", [])) if d else "?"
     except Exception:
         return "?"
 
 
 def get_skills_count():
     try:
-        with open("/tmp/c.txt") as f:
-            cookie = f.read().strip().replace("odysseus_session ", "")
-        import urllib.request
-        req = urllib.request.Request(
-            "http://localhost:7000/api/skills",
-            headers={"Cookie": f"odysseus_session={cookie}"},
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            d = json.loads(resp.read())
-            return len(d.get("skills", []))
+        from vexin_auth import authenticated_request
+        d = authenticated_request("GET", "/api/skills")
+        return len(d.get("skills", [])) if d else "?"
     except Exception:
         return "?"
 
@@ -1307,7 +1336,7 @@ function render() {
         <div class="job-meta">
           <span>PID ${j.pid}</span>
           <span>uptime ${j.etime}</span>
-          <span class="job-cpu">CPU ${j.cpu_pct}%</span>
+          <span class="job-cpu">CPU ${typeof j.cpu_pct === 'number' ? j.cpu_pct.toFixed(1) : '0.0'}%</span>
         </div>
       </div>`);
       const log = j.log_tail.map(line => {

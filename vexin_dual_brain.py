@@ -76,7 +76,19 @@ GPU_EXECUTOR_LOCAL_DEFAULT = "llama3.1:8b"  # local fallback (works on 16GB)
 
 # Odysseus
 ODYSSEUS_URL = "http://localhost:7000"
-COOKIE_FILE = "/tmp/c.txt"
+
+# Use secure credential manager (handles session caching, auto-renewal, chmod 600)
+try:
+    from vexin_auth import get_session as _get_session, authenticated_request as _auth_request
+    USE_AUTH = True
+except ImportError:
+    USE_AUTH = False
+    COOKIE_FILE = "/home/vexin/.local/share/vexin/odysseus_session"
+    def _get_session():
+        if not os.path.exists(COOKIE_FILE):
+            return None
+        with open(COOKIE_FILE) as f:
+            return f.read().strip().split()[-1] if f.read().strip().startswith("odysseus_session") else f.read().strip()
 
 
 def get_ody_session():
