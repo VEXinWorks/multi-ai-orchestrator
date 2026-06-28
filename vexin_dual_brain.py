@@ -173,16 +173,42 @@ def cpu_think(question, max_thinking_tokens=400, max_summary_tokens=200):
     t0 = time.time()
     import urllib.request
 
+    # System context (injected into every CPU thinker call)
+    system_context = """[SYSTEM CONTEXT]
+You are the CPU meta-reasoner for VEXinWorks, João's local AI in Paraguay.
+Hardware: AMD RX 6900 XT (16GB VRAM), 15GB RAM, AMD Ryzen CPU.
+Local Ollama: http://localhost:11434. Cloud: https://ollama.com/api/chat.
+
+MODELS YOU CAN SUGGEST (fit in 16GB VRAM):
+  LOCAL: llama3.1:8b (4.9GB, default), llama3.2:3b (2.0GB, fast),
+         qwen2.5-coder:7b (4.7GB, code), deepseek-r1:8b (5.2GB, deep thinking),
+         llava:7b (4.7GB, vision), moondream (1.7GB, small vision),
+         llama3.2-vision:11b (7.8GB, risky)
+  CPU-ONLY: deepseek-r1:1.5b (you! 1.1GB RAM)
+  CLOUD: minimax-m3 (fast), nemotron-3-ultra (strong), glm-5.2, kimi-k2.6, deepseek-v4-pro
+
+MODELS YOU MUST NEVER SUGGEST (don't fit 16GB):
+  gpt-oss:120b, gpt-oss:20b, mistral-large-3:675b, devstral-2:123b,
+  devstral-small-2:24b, qwen3-coder:480b, qwen3-coder-next,
+  qwen3.5:397b, deepseek-v3.1:671b
+
+VRAM RULE: Two models loaded = total ≤ 12GB. CPU models don't count.
+DEFAULT: llama3.1:8b (local) + you on CPU. Auto-clean VRAM after each call.
+"""
+
     # Step 1: Think
-    thinking_prompt = f"""Think briefly about this question.
+    thinking_prompt = f"""{system_context}
 
-Question: {question}
+[USER QUESTION]
+{question}
 
-Consider:
+[YOUR TASK]
+Think briefly about this question. Consider:
 - What's being asked
-- What context is needed
+- What context is needed (RAG may have it)
 - What approach to take
 - Pitfalls to avoid
+- Which model is best to execute this (pick from safe list above)
 
 Be concise but thorough. Don't use <think> tags."""
 
