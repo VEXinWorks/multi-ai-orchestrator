@@ -35,6 +35,15 @@ LOG_FILES = {
     "business_plan": "/tmp/business-plan.log",
     "apply_best": "/tmp/apply-best.log",
     "generate_patches": "/tmp/generate-patches.log",
+    "school_v1": "/tmp/school-batch-night.log",
+    "school_v2": "/tmp/school-with-practice.log",
+    "school_v3": "/tmp/school-v3.log",
+    "school_v4": "/tmp/school-v4-parallel.log",
+    "workforce": "/tmp/local-workforce.log",
+    "round5": "/tmp/round-5-research.log",
+    "deep_paraguay": "/tmp/deep-paraguay-compliance.log",
+    "advanced_teach": "/tmp/advanced-teach.log",
+    "gen_tools": "/tmp/gen-tools-out.log",
 }
 
 # AI Profiles — each AI gets a distinct persona
@@ -333,7 +342,7 @@ def get_jobs():
 
     r = subprocess.run(
         ["bash", "-c",
-         "ps -ef | grep -E 'audit_all|research_business|deep_review|teach_prod|research_paraguay|business_plan|apply_best|generate_patches|ai_school.py|orchestrator' | grep -v grep"],
+         "ps -ef | grep -E 'audit_all|research_business|deep_review|teach_prod|research_paraguay|business_plan|apply_best|generate_patches|ai_school\\.py|orchestrator|vexin_local_workforce|school_v[1-4]|round5|workforce\\.sh' | grep -v grep"],
         capture_output=True, text=True, timeout=5,
     )
     jobs = []
