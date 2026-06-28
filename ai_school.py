@@ -555,23 +555,24 @@ VERIFIED BY: minimax-m3
     def status(self):
         """Show curriculum progress."""
         # Count memories by ai_school_ source
-        result = self.ody._request("GET", "/api/memory/timeline", params={"limit": 200})
+        result = self.ody._request("GET", "/api/memory/timeline", params={"limit": 500})
         if not isinstance(result, dict):
             return {"error": "could not fetch memory"}
+        entries = result.get("timeline", [])
         lessons_done = {}
-        for entry in result.get("entries", []):
+        for entry in entries:
             src = entry.get("source", "")
             if src.startswith("ai_school_"):
                 subj = src.replace("ai_school_", "")
                 lessons_done[subj] = lessons_done.get(subj, 0) + 1
         print(f"\n{'='*70}\nAI SCHOOL — PROGRESS\n{'='*70}")
         for subj, info in CURRICULUM.items():
-            done = lessons_done.get(subj, 0)
+            done = lessons_done.get(subj, 0) // 4  # 4 chunks per lesson (teach/critique/verify/extra)
+            done = min(done, len(info["lessons"]))
             total = len(info["lessons"])
             bar = "█" * done + "░" * (total - done)
             print(f"  [{bar}] {info['title']:35} {done}/{total}")
-        print(f"\nTotal lessons stored: {sum(lessons_done.values())}")
-        print(f"Total curriculum:     {sum(len(s['lessons']) for s in CURRICULUM.values())}")
+        print(f"\nTotal lessons completed: ~{sum(min(lessons_done.get(s, 0) // 4, 10) for s in CURRICULUM)}/{sum(len(s['lessons']) for s in CURRICULUM.values())}")
 
 
 def main():
