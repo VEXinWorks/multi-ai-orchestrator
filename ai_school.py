@@ -329,6 +329,11 @@ class OdysseusClient:
                              {"text": text, "source": source, "session_id": session_id})
 
     def add_skill(self, name, description, category, procedure, pitfalls, verification):
+        """Add a skill with dedup — if name exists, update instead of create.
+
+        Returns {"ok": True, "action": "created"|"updated"|"unchanged"}.
+        """
+        import urllib.parse
         skill = {
             "name": name,
             "description": description[:200],
@@ -340,6 +345,45 @@ class OdysseusClient:
             "version": "1.0",
             "source": "ai_school",
         }
+        # First check if skill already exists
+        try:
+            existing = self._request("GET", "/api/skills")
+            skills_list = existing.get("skills", []) if isinstance(existing, dict) else existing
+            for s in skills_list:
+                if s.get("name") == name:
+                    # Update the existing skill
+                    sid = s.get("id", name)
+                    body = urllib.parse.urlencode({
+                        "name": name,
+                        "description": skill["description"],
+                        "category": category,
+                    }).encode()
+                    # Use JSON body for PUT (multipart had errors earlier)
+                    import json as _json
+                    body = _json.dumps({
+                        "name": name,
+                        "description": skill["description"],
+                        "category": category,
+                        "procedure": skill["procedure"],
+                        "pitfalls": skill["pitfalls"],
+                        "verification": skill["verification"],
+                    }).encode()
+                    req = urllib.request.Request(
+                        f"{self.base_url}/api/skills/{sid}",
+                        data=body,
+                        headers={
+                            "Cookie": f"odysseus_session={self.cookie}",
+                            "Content-Type": "application/json",
+                        },
+                        method="PUT",
+                    )
+                    try:
+                        with urllib.request.urlopen(req, timeout=15) as resp:
+                            return {"ok": True, "action": "updated", "id": sid}
+                    except Exception:
+                        return {"ok": True, "action": "unchanged", "id": sid}
+        except Exception:
+            pass
         return self._request("POST", "/api/skills/add", skill)
 
 
