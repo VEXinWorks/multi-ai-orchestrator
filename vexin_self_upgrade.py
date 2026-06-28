@@ -262,11 +262,11 @@ def web_search(query):
     import urllib.request
     import urllib.parse
 
-    # Try searxng first
+    # Try searxng first (on port 8080 in docker setup)
     try:
         params = urllib.parse.urlencode({"q": query, "format": "json", "language": "en"})
         req = urllib.request.Request(
-            f"http://localhost:8888/search?{params}",
+            f"http://localhost:8080/search?{params}",
             headers={"User-Agent": "vexin-self-upgrade/1.0"},
         )
         with urllib.request.urlopen(req, timeout=15) as resp:
