@@ -102,6 +102,37 @@ class OdysseusClient:
         return self._request("GET", "/api/memory/search",
                              params={"q": query, "limit": limit})
 
+    def create_session(self, name, model="llama3.1:8b", endpoint_id="262a8872"):
+        """Create a new chat session."""
+        body = urlencode({"name": name, "model": model, "endpoint_id": endpoint_id}).encode()
+        req = urllib.request.Request(
+            f"{self.base}/api/session", data=body, method="POST",
+            headers={"Content-Type": "application/x-www-form-urlencoded"})
+        if self.cookie:
+            req.add_header("Cookie", f"odysseus_session={self.cookie}")
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return json.loads(resp.read().decode())
+        except Exception as e:
+            return {"error": str(e)}
+
+    def chat(self, message, session_id, timeout=120):
+        return self._request("POST", "/api/chat",
+                             {"message": message, "session": session_id}, timeout=timeout)
+
+    def get_or_create_session(self, name, model="llama3.1:8b", endpoint_id="262a8872"):
+        """Get existing session by name, or create a new one."""
+        sessions = self._request("GET", "/api/sessions")
+        if isinstance(sessions, list):
+            for s in sessions:
+                if s.get("name") == name:
+                    return s.get("id")
+        # Create new
+        result = self.create_session(name, model, endpoint_id)
+        if isinstance(result, dict):
+            return result.get("id")
+        return None
+
 
 # === MODES ===
 def briefing(ody):
@@ -177,6 +208,10 @@ def subprocess_run_printer_status():
 def plan(goal, ody):
     """Plan a task: steps, dependencies, time estimate."""
     print(f"\n📋 PLAN: {goal}\n")
+    sid = ody.get_or_create_session("jarvis-plan")
+    if not sid:
+        print("(could not create session)")
+        return
     prompt = f"""Plan this task for João (a 3D printing business owner in Paraguay):
 
 Task: {goal}
@@ -191,11 +226,9 @@ Output a structured plan:
 
 Be CONCISE — João prefers brief, actionable plans over essays. Use his language (low-formality English mixed with Portuguese/Spanish)."""
 
-    r = ody._request("POST", "/api/chat",
-                     {"message": prompt, "session": "plan-session"})
+    r = ody.chat(prompt, sid)
     if isinstance(r, dict):
         print(r.get("response", "(no response)"))
-        # Save to memory
         ody.add_memory(f"PLAN: {goal}\n\n{r.get('response', '')[:1000]}",
                        source="jarvis_plan")
 
@@ -203,6 +236,10 @@ Be CONCISE — João prefers brief, actionable plans over essays. Use his langua
 def decide(question, ody):
     """Decision helper: pros/cons, second-order effects, recommendation."""
     print(f"\n🤔 DECIDE: {question}\n")
+    sid = ody.get_or_create_session("jarvis-decide")
+    if not sid:
+        print("(could not create session)")
+        return
     prompt = f"""Help João decide this. He's a small business owner in Paraguay, time-poor, prefers direct advice.
 
 Question: {question}
@@ -217,8 +254,7 @@ Output:
 
 Be CONCISE — João doesn't want essays. Be willing to commit to a recommendation."""
 
-    r = ody._request("POST", "/api/chat",
-                     {"message": prompt, "session": "decide-session"})
+    r = ody.chat(prompt, sid)
     if isinstance(r, dict):
         print(r.get("response", "(no response)"))
         ody.add_memory(f"DECISION: {question}\n\n{r.get('response', '')[:1000]}",
@@ -228,6 +264,11 @@ Be CONCISE — João doesn't want essays. Be willing to commit to a recommendati
 def brainstorm(topic, ody):
     """Brainstorm ideas."""
     print(f"\n💡 BRAINSTORM: {topic}\n")
+    # Use minimax-m3 (cloud) for brainstorm — much faster than local for long outputs
+    sid = ody.get_or_create_session("jarvis-brainstorm", model="minimax-m3", endpoint_id="d2947ec9")
+    if not sid:
+        print("(could not create session)")
+        return
     prompt = f"""Brainstorm 10 ideas for João (3D printing business owner in Paraguay) about:
 
 Topic: {topic}
@@ -241,11 +282,11 @@ For each idea:
 
 Be creative but practical. Prefer low-effort / high-impact. Mix safe bets with moonshots (mark which is which)."""
 
-    r = ody._request("POST", "/api/chat",
-                     {"message": prompt, "session": "brainstorm-session"})
+    r = ody.chat(prompt, sid, timeout=180)
     if isinstance(r, dict):
-        print(r.get("response", "(no response)"))
-        ody.add_memory(f"BRAINSTORM: {topic}\n\n{r.get('response', '')[:1500]}",
+        response = r.get("response", "(no response)")
+        print(response)
+        ody.add_memory(f"BRAINSTORM: {topic}\n\n{response[:1500]}",
                        source="jarvis_brainstorm")
 
 
