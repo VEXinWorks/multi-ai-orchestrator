@@ -582,24 +582,31 @@ VERIFIED BY: minimax-m3
     def status(self):
         """Show curriculum progress."""
         # Count memories by ai_school_ source
-        result = self.ody._request("GET", "/api/memory/timeline", params={"limit": 500})
+        result = self.ody._request("GET", "/api/memory/timeline", params={"limit": 1000})
         if not isinstance(result, dict):
             return {"error": "could not fetch memory"}
         entries = result.get("timeline", [])
         lessons_done = {}
         for entry in entries:
             src = entry.get("source", "")
-            if src.startswith("ai_school_"):
-                subj = src.replace("ai_school_", "")
-                lessons_done[subj] = lessons_done.get(subj, 0) + 1
+            text = entry.get("text", "")
+            if src.startswith("ai_school_") and "AI SCHOOL LESSON" in text:
+                try:
+                    lid = text.split("AI SCHOOL LESSON")[1].split()[0]
+                    lessons_done[lid] = lessons_done.get(lid, 0) + 1
+                except Exception:
+                    pass
         print(f"\n{'='*70}\nAI SCHOOL — PROGRESS\n{'='*70}")
         for subj, info in CURRICULUM.items():
-            done = lessons_done.get(subj, 0) // 4  # 4 chunks per lesson (teach/critique/verify/extra)
-            done = min(done, len(info["lessons"]))
+            # Count unique lessons completed (each lesson stored as 1 entry per PART)
+            lids = [lid for lid in lessons_done.keys() if lid.startswith(subj)]
+            done = len(lids)
             total = len(info["lessons"])
             bar = "█" * done + "░" * (total - done)
             print(f"  [{bar}] {info['title']:35} {done}/{total}")
-        print(f"\nTotal lessons completed: ~{sum(min(lessons_done.get(s, 0) // 4, 10) for s in CURRICULUM)}/{sum(len(s['lessons']) for s in CURRICULUM.values())}")
+        total_done = len(lessons_done)
+        total_lessons = sum(len(s["lessons"]) for s in CURRICULUM.values())
+        print(f"\nTotal lessons completed: {total_done}/{total_lessons}")
 
 
 def main():
