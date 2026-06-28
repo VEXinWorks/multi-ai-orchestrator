@@ -478,17 +478,27 @@ def get_state():
                 size_str = parts[size_col]
                 if name in active_profile_names:
                     continue
-                # Parse size (handles "1.1", "4.7", "274M", etc.)
+                # Parse size (handles "1.1", "4.7", "274 MB", "1.1 GB", etc.)
                 size_gb = 0
                 try:
-                    if size_str.endswith('GB'):
-                        size_gb = float(size_str[:-2])
-                    elif size_str.endswith('MB') or size_str.endswith('M'):
-                        size_gb = float(size_str.rstrip('MB').rstrip('M')) / 1024
-                    elif size_str.endswith('B'):
-                        size_gb = float(size_str[:-1]) / 1e9
+                    s = size_str.strip()
+                    # First strip unit
+                    if s.endswith('GB'):
+                        size_gb = float(s[:-2])
+                    elif s.endswith('MB') or (s.endswith('M') and not s.endswith('GB')):
+                        num = s.rstrip('MB').rstrip('M')
+                        size_gb = float(num) / 1024 if num else 0
+                    elif s.endswith('KB') or s.endswith('K'):
+                        size_gb = float(s.rstrip('KB').rstrip('K')) / (1024 * 1024)
+                    elif s.endswith('B') and not s.endswith('GB') and not s.endswith('MB'):
+                        size_gb = float(s[:-1]) / 1e9
                     else:
-                        size_gb = float(size_str)
+                        # No unit — assume MB if value < 100, else GB
+                        n = float(s)
+                        if n < 100:
+                            size_gb = n / 1024  # treat as MB
+                        else:
+                            size_gb = n  # already GB
                 except Exception:
                     size_gb = 0
                 # Skip cloud placeholders with 0 size
